@@ -35,7 +35,8 @@ graph::graph(string jsonfile) //,
   FILE *pFile = fopen(adj_file, "rb");
   adj_list = (vertex_t *)malloc(fsize(adj_file));
   //	printf("adj_file size: %d\n", fsize(adj_file));
-  fread(adj_list, sizeof(vertex_t), edge_count, pFile);
+  auto read_size = fread(adj_list, sizeof(vertex_t), edge_count, pFile);
+  (void)read_size;
   fclose(pFile);
 
   // FILE *pFile2= fopen(degree_file,"rb");
@@ -46,7 +47,7 @@ graph::graph(string jsonfile) //,
 
   FILE *pFile3 = fopen(begin_file, "rb");
   beg_pos = (index_t *)malloc(fsize(begin_file));
-  fread(beg_pos, sizeof(index_t), vert_count + 1, pFile3);
+  read_size = fread(beg_pos, sizeof(index_t), vert_count + 1, pFile3);
   fclose(pFile3);
 
   // 	count = new index_t[256];

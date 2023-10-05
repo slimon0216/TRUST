@@ -3,6 +3,7 @@
 #include "herror.h"
 #include "wtime.h"
 #include <assert.h>
+#include <bits/types/clock_t.h>
 #include <cstdlib>
 #include <iostream>
 #include <iterator>
@@ -204,12 +205,17 @@ __global__ void dynamic_assign(vertex_t *adj_list, index_t *beg_pos,
                                int total_process, int BUCKET_SIZE, int T_Group,
                                int *G_INDEX, int CHUNK_SIZE,
                                int warpfirstvertex, unsigned long long *gettime,
-                               unsigned long long *maxcollision) {
+                               unsigned long long *maxcollision,
+                               clock_t *thread_start, clock_t *thread_end,
+                               clock_t *active_times) {
 
   int tid = threadIdx.x + blockIdx.x * blockDim.x;
-  // cudaEvent_t start, stop;
-  // cudaEventCreate(&start);
-  // cudaEventCreate(&stop);
+  clock_t start_t, end_t, prev_t;
+  active_times[tid] = 0;
+  prev_t = start_t = clock(); // cycles
+
+
+  // cache hash(i).len in the shared memory ?
   __shared__ int bin_count[block_bucketnum];
   __shared__ int shared_partition[block_bucketnum * shared_BUCKET_SIZE + 1];
   // __shared__ int shared_now,shared_workid;
@@ -221,9 +227,9 @@ __global__ void dynamic_assign(vertex_t *adj_list, index_t *beg_pos,
     G_counter = 0;
   }
   // timetest
-  unsigned long long TT = 0, HT = 0, IT = 0;
-  unsigned long long __shared__ G_TT, G_HT, G_IT;
-  G_TT = 0, G_HT = 0, G_IT = 0;
+  // unsigned long long TT = 0, HT = 0, IT = 0;
+  // unsigned long long __shared__ G_TT, G_HT, G_IT;
+  // G_TT = 0, G_HT = 0, G_IT = 0;
 
   int BIN_START = blockIdx.x * block_bucketnum * BUCKET_SIZE;
   // __syncthreads();
@@ -237,8 +243,9 @@ __global__ void dynamic_assign(vertex_t *adj_list, index_t *beg_pos,
   int vertex_end = vertex + CHUNK_SIZE;
   __shared__ int ver;
   while (vertex < warpfirstvertex) {
+    // printf("%d,\t%d,\t%d\n", tid, vertex, warpfirstvertex);
 
-    int degree = beg_pos[vertex + 1] - beg_pos[vertex];
+    // int degree = beg_pos[vertex + 1] - beg_pos[vertex];
     // if (degree<=USE_CTA) break;
     int start = beg_pos[vertex];
     int end = beg_pos[vertex + 1];
@@ -249,12 +256,18 @@ __global__ void dynamic_assign(vertex_t *adj_list, index_t *beg_pos,
     // clean bin_count
     for (int i = threadIdx.x; i < block_bucketnum; i += blockDim.x)
       bin_count[i] = 0;
+
+    end_t = clock();
+    active_times[tid] += end_t - prev_t;
     __syncthreads();
+    prev_t = clock();
 
     // start_time = clock64();
     // count hash bin
+    // build the hash table
     while (now < end) {
       int temp = adj_list[now];
+      // bin is just the hash value
       int bin = temp & MODULO;
       int index;
       for (;;) {
@@ -273,7 +286,11 @@ __global__ void dynamic_assign(vertex_t *adj_list, index_t *beg_pos,
       }
       now += blockDim.x;
     }
+
+    end_t = clock();
+    active_times[tid] += end_t - prev_t;
     __syncthreads();
+    prev_t = clock();
 
     // unsigned long long hash_time=clock64()-start_time;
     // start_time = clock64();
@@ -366,7 +383,10 @@ __global__ void dynamic_assign(vertex_t *adj_list, index_t *beg_pos,
     // %lld\n",degree,vertex,blockIdx.x,max_len_collision,hash_time,intersection_time);
     // }
 
+    end_t = clock();
+    active_times[tid] += end_t - prev_t;
     __syncthreads();
+    prev_t = clock();
     // if (vertex>1) break;
     if (use_static) {
       vertex += gridDim.x * total_process;
@@ -376,7 +396,11 @@ __global__ void dynamic_assign(vertex_t *adj_list, index_t *beg_pos,
         if (threadIdx.x == 0) {
           ver = atomicAdd(&G_INDEX[1], CHUNK_SIZE * total_process);
         }
+
+        end_t = clock();
+        active_times[tid] += end_t - prev_t;
         __syncthreads();
+        prev_t = clock();
         vertex = ver;
         vertex_end = vertex + CHUNK_SIZE;
       }
@@ -399,6 +423,7 @@ __global__ void dynamic_assign(vertex_t *adj_list, index_t *beg_pos,
   while (vertex < vertex_count)
   // while (0)
   {
+    // printf("%d,\t%d,\t%d\n", tid, vertex, vertex_count);
     unsigned long long start_time = clock64();
     int degree = beg_pos[vertex + 1] - beg_pos[vertex];
     if (degree < USE_WARP)
@@ -537,6 +562,8 @@ __global__ void dynamic_assign(vertex_t *adj_list, index_t *beg_pos,
   // atomicAdd(&G_TT,TT);
   // atomicAdd(&G_IT,IT);
 
+  end_t = clock();
+  active_times[tid] += end_t - prev_t;
   __syncthreads();
   if (threadIdx.x == 0) {
     // printf("%d\n",G_TT);
@@ -545,6 +572,9 @@ __global__ void dynamic_assign(vertex_t *adj_list, index_t *beg_pos,
     // atomicAdd(&GLOBAL_COUNT[2],G_HT);
     // atomicAdd(&GLOBAL_COUNT[3],G_IT);
   }
+  end_t = clock();
+  thread_start[tid] = start_t;
+  thread_end[tid] = end_t;
 }
 
 struct arguments Triangle_count(int rank, char name[100], struct arguments args,
@@ -553,7 +583,7 @@ struct arguments Triangle_count(int rank, char name[100], struct arguments args,
 
   // fprintf(stderr,"---------------Here----------------");
   int T_Group = 32;
-  int PER_BLOCK_WARP = n_threads / T_Group;
+  // int PER_BLOCK_WARP = n_threads / T_Group;
   int total = n_blocks * block_bucketnum * BUCKET_SIZE;
   unsigned long long *counter =
       (unsigned long long *)malloc(sizeof(unsigned long long) * 10);
@@ -569,16 +599,17 @@ struct arguments Triangle_count(int rank, char name[100], struct arguments args,
   // HRR(cudaFuncSetAttribute(dynamic_assign,cudaFuncAttributePreferredSharedMemoryCarveout,16));
   // cudaSetDevice();
   HRR(cudaSetDevice((rank + 1) % deviceCount));
-  // cudaDeviceProp devProp;
-  // HRR(cudaGetDeviceProperties(&devProp, rank));
+  cudaDeviceProp devProp;
+  HRR(cudaGetDeviceProperties(&devProp, rank));
   index_t vertex_count = graph_d->vert_count;
   index_t edge_count = graph_d->edge_count;
   index_t edge_list_count = graph_d->edge_list_count;
   index_t edges = graph_d->edge_count;
   /* Preprocessing Step to calculate the ratio */
   int *prefix = (int *)malloc(sizeof(int) * vertex_count);
-  int temp;
 
+  // USE_CTA = 100, if degree(v) > 100, use an entire block
+  // find the first vertex not using a block
   int warpfirstvertex =
       my_binary_search(vertex_count, USE_CTA, graph_d->beg_pos) + 1;
 
@@ -599,11 +630,11 @@ struct arguments Triangle_count(int rank, char name[100], struct arguments args,
   // cout<<graph_d->beg_pos[vertex_count-100]<<'
   // '<<graph_d->beg_pos[vertex_count-200]<<endl;
 
-  int *hash, *BIN_MEM;
+  int *BIN_MEM;
   unsigned long long *GLOBAL_COUNT, *g_gettime, *g_maxcollision;
   int *G_INDEX;
   index_t *d_beg_pos;
-  vertex_t *d_adj_list, *d_edge_list;
+  vertex_t *d_adj_list;
   float memory_req =
       (sizeof(int) * total + sizeof(index_t) * (vertex_count + 1) +
        sizeof(vertex_t) * (edge_count) + sizeof(vertex_t) * (edge_list_count)) /
@@ -639,6 +670,10 @@ struct arguments Triangle_count(int rank, char name[100], struct arguments args,
   // cudaMemcpyHostToDevice));
   // HRR(cudaMemcpy(d_edge_list,graph_d->edge_list,sizeof(vertex_t)*(vertex_count+1),
   // cudaMemcpyHostToDevice));
+  // for (int i = 1; i < vertex_count+1; ++i) {
+  //   cout << graph_d->beg_pos[i] - graph_d->beg_pos[i-1] << ' ';
+  // }
+  // exit(1);
   HRR(cudaMemcpy(d_beg_pos, graph_d->beg_pos,
                  sizeof(index_t) * (vertex_count + 1), cudaMemcpyHostToDevice));
   HRR(cudaMemcpy(d_adj_list, graph_d->adj_list, sizeof(vertex_t) * edge_count,
@@ -649,13 +684,21 @@ struct arguments Triangle_count(int rank, char name[100], struct arguments args,
   double cmp_time;
   HRR(cudaMalloc((void **)&BIN_MEM, sizeof(int) * total));
 
+  clock_t *thread_start;
+  clock_t *thread_end;
+  clock_t *active_times;
+  HRR(cudaMallocManaged(&thread_start, sizeof(clock_t) * n_blocks * n_threads));
+  HRR(cudaMallocManaged(&thread_end, sizeof(clock_t) * n_blocks * n_threads));
+  HRR(cudaMallocManaged(&active_times, sizeof(clock_t) * n_blocks * n_threads));
+
   if (1) {
     double time_start = clock();
     // HRR(cudaMalloc((void **) &BIN_MEM,sizeof(int)*total));
     dynamic_assign<<<n_blocks, n_threads>>>(
         d_adj_list, d_beg_pos, edge_count, vertex_count, BIN_MEM, GLOBAL_COUNT,
         rank, total_process, BUCKET_SIZE, T_Group, G_INDEX, chunk_size,
-        warpfirstvertex, g_gettime, g_maxcollision);
+        warpfirstvertex, g_gettime, g_maxcollision, thread_start, thread_end,
+        active_times);
 
     cudaError_t err = cudaGetLastError();
     if (err != cudaSuccess) {
@@ -707,6 +750,20 @@ struct arguments Triangle_count(int rank, char name[100], struct arguments args,
   // 		cout<<i<<endl;
   // 		break;
   // 	}
+
+  string log_name = string(name);
+  log_name = string("log_") + basename(log_name.substr(0, log_name.length()-1).c_str());
+  // cout <<log_name<<endl;
+  log_name += "_" + to_string(n_blocks) + 'x' + to_string(n_threads);
+  FILE *log_file = fopen(log_name.c_str(), "w"); 
+  printf("clock rate: %dKHz\n", devProp.clockRate);
+  fprintf(log_file, "%f\n", cmp_time*1000);
+  fprintf(log_file, "thread_id,start_time,end_time,clock_time,active_time\n");
+  for (int i = 0; i < n_blocks * n_threads; ++i) {
+    fprintf(log_file, "%d,%ld,%ld,%ld,%ld\n", i, thread_start[i], thread_end[i],
+            thread_end[i] - thread_start[i], active_times[i]);
+  }
+  fclose(log_file);
   args.edge_count = edges;
   args.degree = edges / vertex_count;
   args.vertices = vertex_count;

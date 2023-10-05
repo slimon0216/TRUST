@@ -13,12 +13,42 @@
 #include <sys/types.h>
 #include <unistd.h>
 using namespace std;
+
+#include <ostream>
+namespace Color {
+    enum Code {
+        FG_RED      = 31,
+        FG_GREEN    = 32,
+        FG_YELLOW   = 33,
+        FG_BLUE     = 34,
+        FG_DEFAULT  = 39,
+        BG_RED      = 41,
+        BG_GREEN    = 42,
+        BG_BLUE     = 44,
+        BG_DEFAULT  = 49
+    };
+    class Modifier {
+        Code code;
+    public:
+        Modifier(Code pCode) : code(pCode) {}
+        friend std::ostream&
+        operator<<(std::ostream& os, const Modifier& mod) {
+            return os << "\033[" << mod.code << "m";
+        }
+    };
+    
+    Modifier kRed(Color::FG_RED);
+    Modifier kYellow(Color::FG_YELLOW);
+    Modifier kDef(Color::FG_DEFAULT);
+}
+
 int get_cpu_id() {
   /* Get the the current process' stat file from the proc filesystem */
   FILE *procfile = fopen("/proc/self/stat", "r");
   long to_read = 8192;
   char buffer[to_read];
   int read = fread(buffer, sizeof(char), to_read, procfile);
+  (void)read;
   fclose(procfile);
 
   // Field with index 38 (zero-based counting) is the one we want
@@ -54,14 +84,14 @@ void IP_formatter(char *IPbuffer) { // convert IP string to dotted decimal
 }
 void IP(int rank, int cpu_id) {
   char host[256];
-  char *IP;
+  // char *IP;
   struct hostent *host_entry;
   int hostname;
   hostname = gethostname(host, sizeof(host)); // find the host name
   check_host_name(hostname);
   host_entry = gethostbyname(host); // find host information
   check_host_entry(host_entry);
-  IP = inet_ntoa(*((struct in_addr *)host_entry->h_addr_list[0]));
+  // IP = inet_ntoa(*((struct in_addr *)host_entry->h_addr_list[0]));
   // Convert into IP string
   // printf("Current Host Name: %s, Host IP: %s, Rank: %d, CPU_ID: %d\n",
   // host,IP,rank,cpu_id);
@@ -73,7 +103,6 @@ int main(int argc, char *argv[]) {
   int N_THREADS = atoi(argv[3]);
   int N_BLOCKS = atoi(argv[4]);
   int chunk_size = atoi(argv[5]);
-  MPI_Status status;
   struct arguments args;
   /* Initialize the MPI library */
   MPI_Init(&argc, &argv);
@@ -99,11 +128,11 @@ int main(int argc, char *argv[]) {
       now_max_time = args.time;
     now_sum += args.count;
   }
-  int cpu_id = get_cpu_id();
+  // int cpu_id = get_cpu_id();
   // printf("Rank %d, CPU: %d\n",myrank,cpu_id);
   // IP(myrank, cpu_id);
-  // printf("%s,GPU: %d,%d, %d,
-  // %f\n",argv[1],myrank,args.edge_count,args.degree,args.time);
+  printf("%s,GPU: %d,%d, %d,%f\n", argv[1], myrank, args.edge_count,
+         args.degree, args.time);
   // MPI_Barrier(MPI_COMM_WORLD);
   MPI_Reduce(&now_sum, &global_sum, 1, MPI_LONG_LONG_INT, MPI_SUM, 0,
              MPI_COMM_WORLD);
@@ -117,6 +146,7 @@ int main(int argc, char *argv[]) {
            (args.edge_count / global_max_time / 1000000000));
   }
   std::cout << "seconds:" << global_max_time << std::endl;
+  cout << Color::kYellow<< "Triangles: " << global_sum << Color::kDef<< endl;
   MPI_Finalize();
   return 0;
 }

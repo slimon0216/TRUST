@@ -400,8 +400,8 @@ __device__ int max_count(int *bin_count, int start, int end, int len) {
 // neighbor=adj_list[beg_pos[v]+u];
 
 // 						// printf("%d %d
-// %d\n",u,v,neighbor); 						int bin=neighbor
-// & MODULO;
+// %d\n",u,v,neighbor); 						int
+// bin=neighbor & MODULO;
 // 						P_counter+=linear_search(neighbor,partition,bin_count,bin,BIN_OFFSET,BIN_START,BUCKETS);
 // 						N_start+=32;
 // 					}
@@ -427,8 +427,7 @@ __device__ int max_count(int *bin_count, int start, int end, int len) {
 // 						while(start<N_end)
 // 						{
 // 							int
-// neighbor=adj_list[start]; 							int
-// bin=neighbor & MODULO;
+// neighbor=adj_list[start]; int bin=neighbor & MODULO;
 // 							P_counter+=linear_search(neighbor,partition,bin_count,bin,BIN_OFFSET,BIN_START,BUCKETS);
 // 							start+=SubSize;
 // 							//printf("Tid: %d,

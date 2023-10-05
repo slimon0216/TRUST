@@ -3,10 +3,14 @@
 #include <fstream>
 #include <iostream>
 #include <sstream>
+#include <chrono>
 #include <vector>
 #define bounder 100
 
 using namespace std;
+
+chrono::steady_clock::time_point time_start, time_end;
+
 typedef long long index_t;
 
 int vertex_count, edge_count;
@@ -93,7 +97,7 @@ void reassignID() {
     if (k3 == -1 && vertex[i].edge.size() < 2)
       k3 = i;
   }
-  cout << k2 << ' ' << k3 << endl;
+  // cout << k2 << ' ' << k3 << endl;
   int s1 = k1, s2 = k2, s3 = k3;
   for (int i = 0; i < vertex_count; i++) {
     if (vertex[i].edge.size() <= 2)
@@ -164,6 +168,8 @@ void computeCSR(int k) {
 
   reassignID();
 
+  time_end = chrono::steady_clock::now();
+
   ofstream beginFile("begin.bin", ios::out | ios::binary);
   ofstream adjFile("adjacent.bin", ios::out | ios::binary);
   // ofstream edgeFile("edge", ios::out|ios::binary);
@@ -183,8 +189,15 @@ void computeCSR(int k) {
 
   beginFile.write((char *)&sum, sizeof(long long));
 }
+
+
 int main() {
+  // 把已經壓縮過 vertex id 的 edgelist 讀進來，存成 adjacency list
   loadgraph();
+ 
+  cout << "high level" << endl;
+  time_start = chrono::steady_clock::now();
+  // 根據 outdegree 由小到大排序
   sort(vertex.begin(), vertex.end(), cmp1);
 
   // print
@@ -195,15 +208,18 @@ int main() {
 
   orientation();
 
+  // 根據 outdegree 由大到小排序
   sort(vertex.begin(), vertex.end(), cmp2);
 
-  cout << vertex[0].edge.size() << endl;
+  // cout << vertex[0].edge.size() << endl;
   int k = binary_search(32);
-  cout << k << endl;
+  // cout << k << endl;
   // cout<<vertex[k].edge.size()<<endl;
   // cout<<vertex[k-1].edge.size()<<endl;
-  cout << k << endl;
+  // cout << k << endl;
   computeCSR(k);
+
+  std::cout << chrono::duration<double>(time_end - time_start).count() << " s" << endl;
   // for (int i = 0; i < k; i++)
   // {
   //     cout<<vertex[i].edge.size()<<endl;
