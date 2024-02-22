@@ -210,34 +210,20 @@ __global__ void dynamic_assign(vertex_t *adj_list, index_t *beg_pos,
                                clock_t *active_times) {
 
   int tid = threadIdx.x + blockIdx.x * blockDim.x;
-  clock_t start_t, end_t, prev_t;
-  active_times[tid] = 0;
-  prev_t = start_t = clock(); // cycles
-
 
   // cache hash(i).len in the shared memory ?
   __shared__ int bin_count[block_bucketnum];
   __shared__ int shared_partition[block_bucketnum * shared_BUCKET_SIZE + 1];
-  // __shared__ int shared_now,shared_workid;
-  // __shared__ int useless[1024*9];
-  // useless[threadIdx.x]=1;
+
   unsigned long long __shared__ G_counter;
   int WARPSIZE = 32;
   if (threadIdx.x == 0) {
     G_counter = 0;
   }
-  // timetest
-  // unsigned long long TT = 0, HT = 0, IT = 0;
-  // unsigned long long __shared__ G_TT, G_HT, G_IT;
-  // G_TT = 0, G_HT = 0, G_IT = 0;
 
   int BIN_START = blockIdx.x * block_bucketnum * BUCKET_SIZE;
-  // __syncthreads();
   unsigned long long P_counter = 0;
 
-  // unsigned long long start_time;
-
-  // start_time = clock64();
   // CTA for large degree vertex
   int vertex = (blockIdx.x * total_process + rank) * CHUNK_SIZE;
   int vertex_end = vertex + CHUNK_SIZE;
@@ -251,18 +237,13 @@ __global__ void dynamic_assign(vertex_t *adj_list, index_t *beg_pos,
     int end = beg_pos[vertex + 1];
     int now = threadIdx.x + start;
     int MODULO = block_bucketnum - 1;
-    // int divide=(vert_count/blockDim.x);
     int BIN_OFFSET = 0;
     // clean bin_count
     for (int i = threadIdx.x; i < block_bucketnum; i += blockDim.x)
       bin_count[i] = 0;
 
-    end_t = clock();
-    active_times[tid] += end_t - prev_t;
     __syncthreads();
-    prev_t = clock();
 
-    // start_time = clock64();
     // count hash bin
     // build the hash table
     while (now < end) {
@@ -287,44 +268,24 @@ __global__ void dynamic_assign(vertex_t *adj_list, index_t *beg_pos,
       now += blockDim.x;
     }
 
-    end_t = clock();
-    active_times[tid] += end_t - prev_t;
     __syncthreads();
-    prev_t = clock();
 
     // unsigned long long hash_time=clock64()-start_time;
     // start_time = clock64();
     // list intersection
     now = beg_pos[vertex];
-    end = beg_pos[vertex + 1];
-    if (without_combination) {
-      while (now < end) {
-        int neighbor = adj_list[now];
-        int neighbor_start = beg_pos[neighbor];
-        int neighbor_end = beg_pos[neighbor + 1];
-        int neighbor_now = neighbor_start + threadIdx.x;
-        while (neighbor_now < neighbor_end) {
-          int temp = adj_list[neighbor_now];
-          int bin = temp & MODULO;
-          P_counter += linear_search(temp, shared_partition, partition,
-                                     bin_count, bin + BIN_OFFSET, BIN_START);
-          neighbor_now += blockDim.x;
-        }
-        now++;
-      }
-    } else {
-      int superwarp_ID = threadIdx.x / 64;
-      int superwarp_TID = threadIdx.x % 64;
+    {
+      const int superwarp_size = 64;
+      int superwarp_ID = threadIdx.x / superwarp_size;
+      int superwarp_TID = threadIdx.x % superwarp_size;
       int workid = superwarp_TID;
       now = now + superwarp_ID;
       int neighbor = adj_list[now];
       int neighbor_start = beg_pos[neighbor];
       int neighbor_degree = beg_pos[neighbor + 1] - neighbor_start;
-      while (now < end)
-      // while (0)
-      {
+      while (now < end) {
         while (now < end && workid >= neighbor_degree) {
-          now += 16;
+          now += blockDim.x / superwarp_size;
           workid -= neighbor_degree;
           neighbor = adj_list[now];
           neighbor_start = beg_pos[neighbor];
@@ -337,79 +298,21 @@ __global__ void dynamic_assign(vertex_t *adj_list, index_t *beg_pos,
                                      bin_count, bin + BIN_OFFSET, BIN_START);
         }
         // __syncthreads();
-        workid += 64;
-      }
-    }
-    if (0) {
-      int workid = threadIdx.x;
-      while (now < end)
-      // while (0)
-      {
-        int neighbor = adj_list[now];
-        int neighbor_start = beg_pos[neighbor];
-        int neighbor_end = beg_pos[neighbor + 1];
-        while (now < end && workid - (neighbor_end - neighbor_start) >= 0) {
-          now++;
-          workid -= (neighbor_end - neighbor_start);
-          neighbor = adj_list[now];
-          neighbor_start = beg_pos[neighbor];
-          neighbor_end = beg_pos[neighbor + 1];
-        }
-
-        // if (threadIdx.x==0)
-        // {
-        // 	shared_now=now;
-        // 	shared_workid=workid;
-        // }
-        // __syncthreads();
-        if (now == end)
-          break;
-        int temp = adj_list[neighbor_start + workid];
-        int bin = temp & MODULO;
-        P_counter += linear_search(temp, shared_partition, partition, bin_count,
-                                   bin + BIN_OFFSET, BIN_START);
-        // __syncthreads();
-        workid += blockDim.x;
-        // workid=shared_workid+threadIdx.x+1;
-        // now=shared_now;
+        workid += superwarp_size;
       }
     }
 
-    // unsigned long long intersection_time=clock64()-start_time;
-    // if (threadIdx.x==0 &&degree>3000)
-    // {
-    // 	int max_len_collision= max_count(bin_count,0,blockDim.x,1);
-    // 	printf("%d %d %d %d %lld
-    // %lld\n",degree,vertex,blockIdx.x,max_len_collision,hash_time,intersection_time);
-    // }
-
-    end_t = clock();
-    active_times[tid] += end_t - prev_t;
     __syncthreads();
-    prev_t = clock();
-    // if (vertex>1) break;
-    if (use_static) {
-      vertex += gridDim.x * total_process;
-    } else {
-      vertex++;
-      if (vertex == vertex_end) {
-        if (threadIdx.x == 0) {
-          ver = atomicAdd(&G_INDEX[1], CHUNK_SIZE * total_process);
-        }
-
-        end_t = clock();
-        active_times[tid] += end_t - prev_t;
-        __syncthreads();
-        prev_t = clock();
-        vertex = ver;
-        vertex_end = vertex + CHUNK_SIZE;
+    vertex++;
+    if (vertex == vertex_end) {
+      if (threadIdx.x == 0) {
+        ver = atomicAdd(&G_INDEX[1], CHUNK_SIZE * total_process);
       }
+      __syncthreads();
+      vertex = ver;
+      vertex_end = vertex + CHUNK_SIZE;
     }
-    // __syncthreads();
   }
-  // __syncthreads();
-  // unsigned long long CTA_time=clock64()-start_time;
-  // start_time = clock64();
 
   // warp method
   int WARPID = threadIdx.x / WARPSIZE;
@@ -474,22 +377,7 @@ __global__ void dynamic_assign(vertex_t *adj_list, index_t *beg_pos,
     now = beg_pos[vertex];
     end = beg_pos[vertex + 1];
 
-    if (without_combination) {
-      while (now < end) {
-        int neighbor = adj_list[now];
-        int neighbor_start = beg_pos[neighbor];
-        int neighbor_end = beg_pos[neighbor + 1];
-        int neighbor_now = neighbor_start + WARP_TID;
-        while (neighbor_now < neighbor_end) {
-          int temp = adj_list[neighbor_now];
-          int bin = temp & MODULO;
-          P_counter += linear_search(temp, shared_partition, partition,
-                                     bin_count, bin + BIN_OFFSET, BIN_START);
-          neighbor_now += WARPSIZE;
-        }
-        now++;
-      }
-    } else {
+    {
       int workid = WARP_TID;
       while (now < end) {
         int neighbor = adj_list[now];
@@ -522,23 +410,7 @@ __global__ void dynamic_assign(vertex_t *adj_list, index_t *beg_pos,
       }
     }
     __syncwarp();
-    // unsigned long long intersection_time=clock64()-intersection_start;
-    // unsigned long long total_time=clock64()-start_time;
-    // if(threadIdx.x%32==0){
-    // 	// printf("%d %d %d\n",total_time, hash_time, intersection_time);
-    // 	// TT+=total_time;
-    // 	// HT+=hash_time;
-    // 	// IT+=intersection_time;
-    // 	gettime[vertex]=total_time;
-    // 	maxcollision[vertex]=max_count(bin_count,BIN_OFFSET,BIN_OFFSET+WARPSIZE,0);
-    // }
-    // if(threadIdx.x%32==0){
-    // 	gettime[vertex]=1;}
-    __syncwarp();
-    // if (vertex>1) break;
-    if (use_static) {
-      vertex += WARPDIM * total_process;
-    } else {
+    {
       vertex++;
       if (vertex == vertex_end) {
         if (WARP_TID == 0) {
@@ -562,8 +434,6 @@ __global__ void dynamic_assign(vertex_t *adj_list, index_t *beg_pos,
   // atomicAdd(&G_TT,TT);
   // atomicAdd(&G_IT,IT);
 
-  end_t = clock();
-  active_times[tid] += end_t - prev_t;
   __syncthreads();
   if (threadIdx.x == 0) {
     // printf("%d\n",G_TT);
@@ -572,9 +442,6 @@ __global__ void dynamic_assign(vertex_t *adj_list, index_t *beg_pos,
     // atomicAdd(&GLOBAL_COUNT[2],G_HT);
     // atomicAdd(&GLOBAL_COUNT[3],G_IT);
   }
-  end_t = clock();
-  thread_start[tid] = start_t;
-  thread_end[tid] = end_t;
 }
 
 struct arguments Triangle_count(int rank, char name[100], struct arguments args,
