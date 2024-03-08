@@ -10,6 +10,8 @@
 #include <math.h>
 #include <queue>
 #include <set>
+#include <algorithm>
+#include <thread>
 #include <stdio.h>
 #include <stdlib.h>
 
@@ -167,6 +169,21 @@ int binary_search(int start, int end, int value, int *arr) {
   return index;
 }
 
+__device__ bool binary_search(const int *destinations, int start, int end,
+                              const int key) {
+  while (start <= end) {
+    int mid = start + ((end - start) >> 1);
+    if (destinations[mid] == key) {
+      return true;
+    } else if (destinations[mid] < key) {
+      start = mid + 1;
+    } else {
+      end = mid - 1;
+    }
+  }
+  return false;
+}
+
 int my_binary_search(int len, int val, index_t *beg) {
   int l = 0, r = len;
   while (l < r - 1) {
@@ -296,6 +313,7 @@ __global__ void dynamic_assign(vertex_t *adj_list, index_t *beg_pos,
           int bin = temp & MODULO;
           P_counter += linear_search(temp, shared_partition, partition,
                                      bin_count, bin + BIN_OFFSET, BIN_START);
+          // P_counter += binary_search(adj_list, beg_pos[vertex], beg_pos[vertex+1]-1, temp);
         }
         // __syncthreads();
         workid += superwarp_size;
@@ -399,6 +417,7 @@ __global__ void dynamic_assign(vertex_t *adj_list, index_t *beg_pos,
           int bin = temp & MODULO;
           P_counter += linear_search(temp, shared_partition, partition,
                                      bin_count, bin + BIN_OFFSET, BIN_START);
+          // P_counter += binary_search(adj_list, beg_pos[vertex], beg_pos[vertex+1]-1, temp);
         }
         __syncwarp();
         now = __shfl_sync(0xffffffff, now, 31);
@@ -443,6 +462,30 @@ __global__ void dynamic_assign(vertex_t *adj_list, index_t *beg_pos,
     // atomicAdd(&GLOBAL_COUNT[3],G_IT);
   }
 }
+
+void sort_adj_list_segment(vertex_t* adj_list, index_t* beg_pos, int start, int end) {
+    for (int i = start; i < end; ++i) {
+        std::sort(adj_list + beg_pos[i], adj_list + beg_pos[i + 1]);
+    }
+}
+
+void parallel_sort_adj_list(vertex_t* adj_list, index_t* beg_pos, int vertex_count, int num_threads) {
+    std::vector<std::thread> threads;
+    int segment_size = vertex_count / num_threads;
+
+    for (int i = 0; i < num_threads; ++i) {
+        int start = i * segment_size;
+        int end = (i == num_threads - 1) ? vertex_count : start + segment_size; // Last thread gets the remainder
+
+        threads.push_back(std::thread(sort_adj_list_segment, adj_list, beg_pos, start, end));
+    }
+
+    // Wait for all threads to complete
+    for (auto& t : threads) {
+        t.join();
+    }
+}
+
 
 struct arguments Triangle_count(int rank, char name[100], struct arguments args,
                                 int total_process, int n_threads, int n_blocks,
@@ -497,6 +540,14 @@ struct arguments Triangle_count(int rank, char name[100], struct arguments args,
   // cout<<graph_d->beg_pos[vertex_count-100]<<'
   // '<<graph_d->beg_pos[vertex_count-200]<<endl;
 
+  /* sort the adj_list for each vertex */
+    // int num_threads = std::thread::hardware_concurrency(); // Use as many threads as there are CPU cores
+    // parallel_sort_adj_list(graph_d->adj_list, graph_d->beg_pos, vertex_count, num_threads);
+  // for (int i = 0; i < vertex_count; ++i) {
+  //   std::sort(graph_d->adj_list + graph_d->beg_pos[i],
+  //        graph_d->adj_list + graph_d->beg_pos[i + 1]);
+  // }
+
   int *BIN_MEM;
   unsigned long long *GLOBAL_COUNT, *g_gettime, *g_maxcollision;
   int *G_INDEX;
@@ -541,6 +592,7 @@ struct arguments Triangle_count(int rank, char name[100], struct arguments args,
   //   cout << graph_d->beg_pos[i] - graph_d->beg_pos[i-1] << ' ';
   // }
   // exit(1);
+
   HRR(cudaMemcpy(d_beg_pos, graph_d->beg_pos,
                  sizeof(index_t) * (vertex_count + 1), cudaMemcpyHostToDevice));
   HRR(cudaMemcpy(d_adj_list, graph_d->adj_list, sizeof(vertex_t) * edge_count,
