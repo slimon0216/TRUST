@@ -296,27 +296,37 @@ __global__ void dynamic_assign(vertex_t *adj_list, index_t *beg_pos,
       int superwarp_ID = threadIdx.x / superwarp_size;
       int superwarp_TID = threadIdx.x % superwarp_size;
       int workid = superwarp_TID;
-      now = now + superwarp_ID;
-      int neighbor = adj_list[now];
-      int neighbor_start = beg_pos[neighbor];
-      int neighbor_degree = beg_pos[neighbor + 1] - neighbor_start;
-      while (now < end) {
-        while (now < end && workid >= neighbor_degree) {
-          now += blockDim.x / superwarp_size;
-          workid -= neighbor_degree;
-          neighbor = adj_list[now];
-          neighbor_start = beg_pos[neighbor];
-          neighbor_degree = beg_pos[neighbor + 1] - neighbor_start;
-        }
-        if (now < end) {
-          int temp = adj_list[neighbor_start + workid];
+      // now = now + superwarp_ID;
+      // int neighbor = adj_list[now];
+      // int neighbor_start = beg_pos[neighbor];
+      // int neighbor_degree = beg_pos[neighbor + 1] - neighbor_start;
+      // while (now < end) {
+      //   while (now < end && workid >= neighbor_degree) {
+      //     now += blockDim.x / superwarp_size;
+      //     workid -= neighbor_degree;
+      //     neighbor = adj_list[now];
+      //     neighbor_start = beg_pos[neighbor];
+      //     neighbor_degree = beg_pos[neighbor + 1] - neighbor_start;
+      //   }
+      //   if (now < end) {
+      //     int temp = adj_list[neighbor_start + workid];
+      //     int bin = temp & MODULO;
+      //     P_counter += linear_search(temp, shared_partition, partition,
+      //                                bin_count, bin + BIN_OFFSET, BIN_START);
+      //     // P_counter += binary_search(adj_list, beg_pos[vertex], beg_pos[vertex+1]-1, temp);
+      //   }
+      //   // __syncthreads();
+      //   workid += superwarp_size;
+      // }
+
+      for (int v = now + superwarp_ID; v < end; v += blockDim.x / superwarp_size) {
+        for (int w = beg_pos[adj_list[v]] + superwarp_TID;
+             w < beg_pos[adj_list[v] + 1]; w += superwarp_size) {
+          int temp = adj_list[w];
           int bin = temp & MODULO;
           P_counter += linear_search(temp, shared_partition, partition,
-                                     bin_count, bin + BIN_OFFSET, BIN_START);
-          // P_counter += binary_search(adj_list, beg_pos[vertex], beg_pos[vertex+1]-1, temp);
+                                     bin_count, bin, BIN_START);
         }
-        // __syncthreads();
-        workid += superwarp_size;
       }
     }
 
@@ -394,40 +404,49 @@ __global__ void dynamic_assign(vertex_t *adj_list, index_t *beg_pos,
     // list intersection
     now = beg_pos[vertex];
     end = beg_pos[vertex + 1];
-
-    {
-      int workid = WARP_TID;
-      while (now < end) {
-        int neighbor = adj_list[now];
-        int neighbor_start = beg_pos[neighbor];
-        int neighbor_degree = beg_pos[neighbor + 1] - neighbor_start;
-        // neighbor=__shfl_sync(0xffffffff,neighbor,31);
-        // neighbor_start=__shfl_sync(0xffffffff,neighbor_start,31);
-        // neighbor_degree=__shfl_sync(0xffffffff,neighbor_degree,31);
-
-        while (now < end && workid >= neighbor_degree) {
-          now++;
-          workid -= neighbor_degree;
-          neighbor = adj_list[now];
-          neighbor_start = beg_pos[neighbor];
-          neighbor_degree = beg_pos[neighbor + 1] - neighbor_start;
-        }
-        if (now < end) {
-          int temp = adj_list[neighbor_start + workid];
-          int bin = temp & MODULO;
-          P_counter += linear_search(temp, shared_partition, partition,
-                                     bin_count, bin + BIN_OFFSET, BIN_START);
-          // P_counter += binary_search(adj_list, beg_pos[vertex], beg_pos[vertex+1]-1, temp);
-        }
-        __syncwarp();
-        now = __shfl_sync(0xffffffff, now, 31);
-        workid = __shfl_sync(0xffffffff, workid, 31);
-
-        workid += WARP_TID + 1;
-
-        // workid+=WARPSIZE;
+    for (int v = now; v < end; v ++) {
+      for (int w = beg_pos[adj_list[v]]+WARP_TID; w < beg_pos[adj_list[v] + 1]; w+=WARPSIZE) {
+        int temp = adj_list[w];
+        int bin = temp & MODULO;
+        bin += BIN_OFFSET;
+        P_counter += linear_search(temp, shared_partition, partition,
+                                   bin_count, bin, BIN_START);
       }
     }
+
+    // {
+    //   int workid = WARP_TID;
+    //   while (now < end) {
+    //     int neighbor = adj_list[now];
+    //     int neighbor_start = beg_pos[neighbor];
+    //     int neighbor_degree = beg_pos[neighbor + 1] - neighbor_start;
+    //     // neighbor=__shfl_sync(0xffffffff,neighbor,31);
+    //     // neighbor_start=__shfl_sync(0xffffffff,neighbor_start,31);
+    //     // neighbor_degree=__shfl_sync(0xffffffff,neighbor_degree,31);
+
+    //     while (now < end && workid >= neighbor_degree) {
+    //       now++;
+    //       workid -= neighbor_degree;
+    //       neighbor = adj_list[now];
+    //       neighbor_start = beg_pos[neighbor];
+    //       neighbor_degree = beg_pos[neighbor + 1] - neighbor_start;
+    //     }
+    //     if (now < end) {
+    //       int temp = adj_list[neighbor_start + workid];
+    //       int bin = temp & MODULO;
+    //       P_counter += linear_search(temp, shared_partition, partition,
+    //                                  bin_count, bin + BIN_OFFSET, BIN_START);
+    //       // P_counter += binary_search(adj_list, beg_pos[vertex], beg_pos[vertex+1]-1, temp);
+    //     }
+    //     __syncwarp();
+    //     now = __shfl_sync(0xffffffff, now, 31);
+    //     workid = __shfl_sync(0xffffffff, workid, 31);
+
+    //     workid += WARP_TID + 1;
+
+    //     // workid+=WARPSIZE;
+    //   }
+    // }
     __syncwarp();
     {
       vertex++;
