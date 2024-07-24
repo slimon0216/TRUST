@@ -2,6 +2,17 @@
 This is the code for [**TRUST: Triangle Counting Reloaded on GPUs**](https://arxiv.org/pdf/2103.08053.pdf).
 
 
+## Our method
+Our implementation is in the branch `ours`. We only modified the implementation in `Without-graph-partition/TC.cu`. We also remove some redundant code and comments, and formatting the code.
+
+Please checkout to that branch:
+```bash
+git checkout ours
+```
+
+Everything else remains the same. Please follow the guideline below.
+
+
 ## Organization
 The code of TRUST has two version: without graph partition for small graph and without graph partition for large graph. Preprocess include the code for preprocessing. Following the step to test the TRUST.
 
@@ -112,3 +123,4 @@ The output arguments is
   publisher={IEEE} 
 }
 ```
+
